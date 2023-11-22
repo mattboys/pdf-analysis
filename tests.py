@@ -4,7 +4,7 @@ from reader import parse
 
 
 def test_all():
-    test_inputs = glob.glob("test_pdfs/batch_2/*.pdf")
+    test_inputs = glob.glob("test_pdfs/batch_4/*.pdf")
     pass_list = []
     fail_list = []
     for pdf in test_inputs:

@@ -535,8 +535,10 @@ def parse(filename):
                         e.add_note(f"{next_class.__name__:<25} {next_class.Pattern.pattern}")
                     raise e
                     # current = None
-        if len(fh.peek()) == 0:
-            raise ParseError(f"Ended before the end of the file! Buffer position is: {fh.tell()}")
+        if len(fh.peek()) != 0:
+            raise ParseError(f"Ended before the end of the file! Buffer position is: {fh.tell()}").add_note(
+                f"Next data: {fh.peek()[:20]}"
+            )
     return pdf
 
 
