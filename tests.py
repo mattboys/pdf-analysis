@@ -28,4 +28,3 @@ if __name__ == '__main__':
     test_all()
     # parse('test_pdfs\TestPDFfile.pdf')
     # parse('test_pdfs\sample.pdf')
-

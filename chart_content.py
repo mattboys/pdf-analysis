@@ -1,5 +1,5 @@
 from textwrap import fill
-from math import floor
+
 from reader import *
 
 DIVISIONS = 70 * 30
@@ -79,7 +79,7 @@ def chart_content(pdf: PdfDoc):
             else:
                 errors.append(f"{type(in_obj)}")
         else:
-            errors.append(f"{type(in_obj)}")
+            errors.append(f"{type(obj)}")
     print(fill(output, WRAP_LEN))
     print("KEY:")
     for k, v in key.items():
