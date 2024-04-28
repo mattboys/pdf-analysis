@@ -1,18 +1,22 @@
+import base64
+import json
+import pprint
 import re
 # import os
 # import codecs
 import sys
 from typing import Optional, Type, Any
 from io import BufferedReader
+
 # from pprint import pprint
 
 VERBOSE = False
 
-
-test_file = "test.pdf"
+test_file = "test_pdfs/batch_1/dummy.pdf"
 
 WHITESPACE = b"[ \r\n\t\x0c\x00]"
 LINEBREAK = b'(\r\n|[\r\n])'
+py_native_types = int | float | bool | str | bytes | list | set | dict | tuple | None
 
 
 def list_bytes(b: bytes) -> list[bytes]:
@@ -91,6 +95,26 @@ class PdfObj:
         else:
             return self.__class__.__name__
 
+    def to_json(self) -> py_native_types:
+        """
+        Convert data to a JSON encodable python object
+        """
+        def convert_to_python_type(in_data):
+            if isinstance(in_data, PdfObj):
+                return convert_to_python_type(in_data.to_json())
+            elif isinstance(in_data, dict):
+                return dict((convert_to_python_type(k), convert_to_python_type(v)) for k, v in in_data.items())
+            elif isinstance(in_data, list):
+                return list(convert_to_python_type(k) for k in in_data)
+            elif isinstance(in_data, tuple):
+                return tuple(convert_to_python_type(k) for k in in_data)
+            elif isinstance(in_data, bytes):
+                return base64.b64encode(in_data).decode('utf-8')
+            else:
+                return in_data
+
+        return convert_to_python_type(self.data)
+
 
 class NestablePdfObj(PdfObj):
     Contexts: list[Type[PdfObj]] = []
@@ -140,7 +164,7 @@ class NestablePdfObj(PdfObj):
 
 
 class PdfName(PdfObj):
-    Pattern = re.compile(b'/[^/ \r\n\t\x0c\x00\[\]<>()]+')
+    Pattern = re.compile(rb'/[^/ \r\n\t\x0c\x00\[\]<>()]+')
 
     def convert(self):
         # print(self.raw)
@@ -149,14 +173,14 @@ class PdfName(PdfObj):
 
 class PdfHexadecimalString(PdfObj):
     """ See 7.3.4.3 """
-    Pattern = re.compile(b'<([0-9a-fA-F]+)>')
+    Pattern = re.compile(rb'<([0-9a-fA-F]*)>')
 
     def convert(self):
         self.data = self.Pattern.match(self.raw).group(1).decode('utf-8')
 
 
 class PdfNumber(PdfObj):
-    Pattern = re.compile(b'[+-]?\d*\.?\d')
+    Pattern = re.compile(rb'[+-]?\d*\.?\d')
 
     def convert(self):
         self.data = self.raw.decode('utf-8')
@@ -171,7 +195,7 @@ class PdfHeader(PdfObj):
 
 
 class PdfComment(PdfObj):
-    Pattern = re.compile(b"%(?!PDF|%EOF)(.*)" + LINEBREAK)
+    Pattern = re.compile(rb"%(?!PDF|%EOF)(.*)" + LINEBREAK)
 
     def convert(self):
         try:
@@ -189,7 +213,7 @@ class PdfComment(PdfObj):
 
 
 class PdfWhitespaces(PdfObj):
-    Pattern = re.compile(b"[ \r\n\t\x0c\x00]+")
+    Pattern = re.compile(rb"[ \r\n\t\x0c\x00]+")
     Trivial = True
 
     def convert(self):
@@ -206,11 +230,12 @@ class PdfWhitespaces(PdfObj):
 
 
 class PdfLinebreak(PdfObj):
-    Pattern = re.compile(b"([\r\n]|\r\n)+")
+    Pattern = re.compile(rb"([\r\n]|\r\n)+")
+    Trivial = True
 
 
 class PdfBool(PdfObj):
-    Pattern = re.compile(b"true|false")
+    Pattern = re.compile(rb"true|false")
 
     def convert(self):
         match = self.Pattern.match(self.raw).group()
@@ -221,7 +246,7 @@ class PdfBool(PdfObj):
 
 
 class PdfStramData(PdfObj):
-    Pattern = re.compile(b'.*', re.DOTALL)
+    Pattern = re.compile(rb'.*', re.DOTALL)
     Trivial = True
 
     def convert(self):
@@ -229,10 +254,10 @@ class PdfStramData(PdfObj):
 
 
 class PdfStream(NestablePdfObj):
-    # Pattern = re.compile(b"stream" + LINEBREAK + b"(.*?)" + b"endstream" + LINEBREAK, re.DOTALL)
-    Pattern = re.compile(b"stream" + LINEBREAK)
+    # Pattern = re.compile(rb"stream" + LINEBREAK + b"(.*?)" + b"endstream" + LINEBREAK, re.DOTALL)
+    Pattern = re.compile(rb"stream" + LINEBREAK)
     Contexts = [PdfStramData]
-    EndingPattern = re.compile(b"(.*?)endstream" + LINEBREAK, re.DOTALL)
+    EndingPattern = re.compile(rb"(.*?)endstream" + LINEBREAK, re.DOTALL)
 
     def add(self, child_obj: PdfObj) -> PdfObj:
         self.data += child_obj.data
@@ -252,7 +277,7 @@ class PdfStream(NestablePdfObj):
 
 
 class PdfReference(PdfObj):
-    Pattern = re.compile(b'(\d+) (\d+) R')
+    Pattern = re.compile(rb'(\d+) (\d+) R')
 
     def convert(self):
         match = self.Pattern.match(self.raw)
@@ -263,11 +288,11 @@ class PdfReference(PdfObj):
 
 
 class PdfNull(PdfObj):
-    Pattern = re.compile(b"null")
+    Pattern = re.compile(rb"null")
 
 
 class PdfLiteralStringParenthesis(PdfObj):
-    Pattern = re.compile(b'[)(]')
+    Pattern = re.compile(rb'[)(]')
     Trivial = True
 
     def convert(self):
@@ -277,7 +302,7 @@ class PdfLiteralStringParenthesis(PdfObj):
 class PdfLiteralStringEscape(PdfObj):
     """ See 7.3.4.2 - Table 3
     """
-    Pattern = re.compile(br'(\\[nrtbf)(\\])|(\\\d{1,3})')
+    Pattern = re.compile(rb'(\\[nrtbf)(\\])|(\\\d{1,3})')
     Trivial = True
 
     #
@@ -310,7 +335,7 @@ class PdfLiteralStringEscape(PdfObj):
 
 
 class PdfLiteralStringOther(PdfObj):
-    Pattern = re.compile(b'.', re.DOTALL)
+    Pattern = re.compile(rb'.', re.DOTALL)
     Trivial = True
 
     def convert(self):
@@ -321,8 +346,8 @@ class PdfLiteralStringOther(PdfObj):
 # TODO Stings
 class PdfLiteralString(NestablePdfObj):
     """ See 7.3.4.2 """
-    Pattern = re.compile(b"\(")
-    EndingPattern = re.compile(b"\)")
+    Pattern = re.compile(rb"\(")
+    EndingPattern = re.compile(rb"\)")
     Contexts = [PdfLiteralStringParenthesis, PdfLiteralStringEscape, PdfLiteralStringOther]
 
     def __init__(self, *args):
@@ -360,17 +385,17 @@ class PdfLiteralString(NestablePdfObj):
 
 
 class PdfList(NestablePdfObj):
-    Pattern = re.compile(b"\[")
-    EndingPattern = re.compile(b"]")
+    Pattern = re.compile(rb"\[")
+    EndingPattern = re.compile(rb"]")
     Contexts = [PdfLiteralString, PdfBool, PdfWhitespaces, PdfName, PdfReference, PdfNumber, PdfHexadecimalString,
                 PdfNull, "PdfList", "PdfDict"]
 
 
 class PdfDict(NestablePdfObj):
-    Pattern = re.compile(b"<<")  # + LINEBREAK + b"*")
-    EndingPattern = re.compile(b">>")  # + LINEBREAK + b"*")
+    Pattern = re.compile(rb"<<")  # + LINEBREAK + b"*")
+    EndingPattern = re.compile(rb">>")  # + LINEBREAK + b"*")
     Contexts = [PdfLiteralString, PdfBool, PdfWhitespaces, PdfName, PdfReference, PdfNumber, PdfHexadecimalString,
-                PdfList, PdfNull, "PdfDict"]
+                PdfList, PdfNull, PdfComment, "PdfDict"]
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -390,9 +415,10 @@ class PdfDict(NestablePdfObj):
 
 class PdfIndirectObj(NestablePdfObj):
     """ See: 7.3.10 """
-    Contexts = [PdfBool, PdfDict, PdfStream, PdfList, PdfWhitespaces, PdfNumber, PdfNull, PdfHexadecimalString]
-    Pattern = re.compile(b'(\d+)' + WHITESPACE + b'(\d+) obj' + WHITESPACE)
-    EndingPattern = re.compile(b'endobj' + LINEBREAK)
+    Contexts = [PdfBool, PdfDict, PdfStream, PdfList, PdfWhitespaces, PdfNumber, PdfNull, PdfHexadecimalString,
+                PdfName, PdfLiteralString]
+    Pattern = re.compile(rb'(\d+)' + WHITESPACE + rb'(\d+) obj' + WHITESPACE + b'*')
+    EndingPattern = re.compile(rb'endobj' + WHITESPACE + b'*' + LINEBREAK)
 
     def convert(self):
         match = self.Pattern.match(self.raw)
@@ -415,7 +441,7 @@ class PdfIndirectObj(NestablePdfObj):
 
 
 class PdfCrossReferenceTableSpec(PdfObj):
-    Pattern = re.compile(b"(\d+) (\d+) *" + LINEBREAK)
+    Pattern = re.compile(rb"(\d+) (\d+) *" + LINEBREAK)
     Trivial = True
 
     def convert(self):
@@ -427,7 +453,7 @@ class PdfCrossReferenceTableSpec(PdfObj):
 
 
 class PdfCrossReferenceTableEntry(PdfObj):
-    Pattern = re.compile(b"(\d{10}) (\d{5}) ([nf])" + WHITESPACE + b'*' + LINEBREAK)
+    Pattern = re.compile(rb"(\d{10}) (\d{5}) ([nf])" + WHITESPACE + b'*' + LINEBREAK)
     Trivial = True
 
     def convert(self):
@@ -442,8 +468,8 @@ class PdfCrossReferenceTableEntry(PdfObj):
 class PdfCrossReferenceTable(NestablePdfObj):
     """ See 7.5.4 """
     Contexts = [PdfCrossReferenceTableSpec, PdfCrossReferenceTableEntry]
-    Pattern = re.compile(b'xref' + LINEBREAK)
-    EndingPattern = re.compile(b'trailer')
+    Pattern = re.compile(rb'xref' + LINEBREAK)
+    EndingPattern = re.compile(rb'trailer')
 
     def match_end(self, next_bytes: bytes) -> (bool, int):
         return super().match_end(next_bytes)[0], 0
@@ -451,14 +477,14 @@ class PdfCrossReferenceTable(NestablePdfObj):
 
 class PdfCrossRefOffset(PdfObj):
     """ See 7.5.5 """
-    Pattern = re.compile(b'startxref' + LINEBREAK + b'(\d+?)' + LINEBREAK)
+    Pattern = re.compile(rb'startxref' + LINEBREAK + rb'(\d+?)' + WHITESPACE + b'*' + LINEBREAK)
 
     def convert(self):
         self.data = self.Pattern.match(self.raw).group(2)
 
 
 class PdfEndOfFileMarker(PdfObj):
-    Pattern = re.compile(b'%%EOF' + LINEBREAK)
+    Pattern = re.compile(rb'%%EOF' + LINEBREAK)
 
     def convert(self):
         self.data = self.raw.decode("utf-8")
@@ -466,8 +492,8 @@ class PdfEndOfFileMarker(PdfObj):
 
 class PdfTrailerDict(NestablePdfObj):
     """ See 7.5.5 """
-    Pattern = re.compile(b'trailer' + LINEBREAK)
-    EndingPattern = re.compile(b'%%EOF')
+    Pattern = re.compile(rb'trailer' + LINEBREAK)
+    EndingPattern = re.compile(rb'%%EOF')
     Contexts = [PdfDict, PdfCrossRefOffset, PdfWhitespaces]
 
     def finish(self, next_bytes: bytes, pos: int):
@@ -498,8 +524,8 @@ class ParseError(Exception):
     pass
 
 
-def parse(filename):
-    pdf = PdfDoc(filename)
+def parse(filename) -> PdfDoc:
+    pdf = PdfDoc(b"")
     current = pdf
     with open(filename, "rb") as fh:
         fh: BufferedReader
@@ -524,7 +550,7 @@ def parse(filename):
                         current = current.add(next_class(fh.read(read_length), pos, current))
                         break
                 else:
-                    e = ParseError(f"Could not parse symbols at byte position {pos:x}")
+                    e = ParseError(f"Could not parse symbols at byte position {pos:x} for file {filename}")
                     e.add_note(f"Byte position:   {pos:x}")
                     e.add_note(f"Current context: {current.get_structure_location()}")
                     e.add_note(f"Current data: {current.data}")
@@ -543,7 +569,8 @@ def parse(filename):
 
 
 if __name__ == "__main__":
-    parse(test_file)
+    pdf = parse(test_file)
+
     #
     # test = PdfList(b"", 0, None)
     # for c in test.get_contexts():
