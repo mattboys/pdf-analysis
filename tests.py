@@ -1,14 +1,17 @@
 import glob
 import json
 from pathlib import Path
+from pprint import pprint
 
 from reader import parse
 
-test_files = Path("test_pdfs/")
-successes = Path("successes/")
+testing_resources = Path("testing_resources/")
+
+test_files = testing_resources / Path("test_pdfs/")
+successes = testing_resources / Path("successes/")
 if not successes.is_dir():
     successes.mkdir()
-fails = Path("fails/")
+fails = testing_resources / Path("fails/")
 if not fails.is_dir():
     fails.mkdir()
 
@@ -45,6 +48,7 @@ def test_to_file():
         old_file.unlink()
 
     for pdf in Path("test_pdfs").glob("*.pdf"):
+        print(pdf.name)
         parse_to_json(pdf)
 
 
@@ -79,5 +83,8 @@ def test_list(test_inputs):
 
 
 if __name__ == '__main__':
-    test_fails()
-    # test_to_file()
+    # filename = ''
+    # p = parse(filename)
+    # pprint(p.to_json())
+    # test_fails()
+    test_to_file()

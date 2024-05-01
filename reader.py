@@ -1,10 +1,12 @@
 import base64
 import json
+import os.path
 import pprint
 import re
 # import os
 # import codecs
 import sys
+import typing
 from typing import Optional, Type, Any
 from io import BufferedReader
 
@@ -103,6 +105,9 @@ class PdfObj:
             if isinstance(in_data, PdfObj):
                 return convert_to_python_type(in_data.to_json())
             elif isinstance(in_data, dict):
+                for k, v in in_data.items():
+                    if not isinstance(convert_to_python_type(k), typing.Hashable):
+                        print(f"Cannot hash the dict key: {convert_to_python_type(k)}")
                 return dict((convert_to_python_type(k), convert_to_python_type(v)) for k, v in in_data.items())
             elif isinstance(in_data, list):
                 return list(convert_to_python_type(k) for k in in_data)
@@ -281,10 +286,11 @@ class PdfReference(PdfObj):
 
     def convert(self):
         match = self.Pattern.match(self.raw)
-        self.data = (
-            decode_int(match.group(1)),
-            decode_int(match.group(2)),
-        )
+        self.data = f"R {decode_int(match.group(1))} {decode_int(match.group(2))}"
+        # (
+        #     decode_int(match.group(1)),
+        #     decode_int(match.group(2)),
+        # )
 
 
 class PdfNull(PdfObj):
@@ -395,7 +401,7 @@ class PdfDict(NestablePdfObj):
     Pattern = re.compile(rb"<<")  # + LINEBREAK + b"*")
     EndingPattern = re.compile(rb">>")  # + LINEBREAK + b"*")
     Contexts = [PdfLiteralString, PdfBool, PdfWhitespaces, PdfName, PdfReference, PdfNumber, PdfHexadecimalString,
-                PdfList, PdfNull, PdfComment, "PdfDict"]
+                PdfList, PdfNull, "PdfDict"]
 
     def __init__(self, *args):
         super().__init__(*args)
@@ -417,13 +423,14 @@ class PdfIndirectObj(NestablePdfObj):
     """ See: 7.3.10 """
     Contexts = [PdfBool, PdfDict, PdfStream, PdfList, PdfWhitespaces, PdfNumber, PdfNull, PdfHexadecimalString,
                 PdfName, PdfLiteralString]
-    Pattern = re.compile(rb'(\d+)' + WHITESPACE + rb'(\d+) obj' + WHITESPACE + b'*')
+    Pattern = re.compile(rb'(\d+)' + WHITESPACE + rb'(\d+) obj')
     EndingPattern = re.compile(rb'endobj' + WHITESPACE + b'*' + LINEBREAK)
 
     def convert(self):
         match = self.Pattern.match(self.raw)
         self.data: Any = {
-            "reference": (decode_int(match.group(1)), decode_int(match.group(2))),
+            # "reference": (decode_int(match.group(1)), decode_int(match.group(2))),
+            "reference": f"R {decode_int(match.group(1))} {decode_int(match.group(2))}",
             "object": None,
             "data stream": None,
         }
@@ -435,7 +442,8 @@ class PdfIndirectObj(NestablePdfObj):
         elif isinstance(child_obj, PdfWhitespaces):
             pass
         else:
-            assert self.data["object"] is None, "Reference Object should not have multiple objects"
+            assert self.data["object"] is None, (f"Reference Object should not have multiple objects "
+                                                 f"{self.data['reference']}")
             self.data["object"] = child_obj
         return self.get_next(child_obj)
 
@@ -480,7 +488,7 @@ class PdfCrossRefOffset(PdfObj):
     Pattern = re.compile(rb'startxref' + LINEBREAK + rb'(\d+?)' + WHITESPACE + b'*' + LINEBREAK)
 
     def convert(self):
-        self.data = self.Pattern.match(self.raw).group(2)
+        self.data = decode_int(self.Pattern.match(self.raw).group(2))
 
 
 class PdfEndOfFileMarker(PdfObj):
@@ -525,6 +533,7 @@ class ParseError(Exception):
 
 
 def parse(filename) -> PdfDoc:
+    file_size = os.path.getsize(filename)
     pdf = PdfDoc(b"")
     current = pdf
     with open(filename, "rb") as fh:
@@ -538,6 +547,10 @@ def parse(filename) -> PdfDoc:
                 peek = fh.read()
                 peek += fh.read()
                 fh.seek(pos)
+            print(f"{pos}/{file_size}\t", end="\r")
+            # if pos == prev_pos:
+            #     assert False, f"Not seeking error at {pos}"
+            # prev_pos = pos
 
             matched_end, read_length = current.match_end(peek)
             if matched_end:
