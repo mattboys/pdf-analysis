@@ -3,9 +3,9 @@ import json
 from pathlib import Path
 from pprint import pprint
 
-from reader import parse
+from reader import parse, decompress
 
-testing_resources = Path("testing_resources/")
+testing_resources = Path(".")
 
 test_files = testing_resources / Path("test_pdfs/")
 successes = testing_resources / Path("successes/")
@@ -21,6 +21,7 @@ def parse_to_json(pdf_filename: Path):
     fail_output = fails / pdf_filename.with_suffix(".txt").name
     try:
         pdf = parse(pdf_filename)
+        pdf = decompress(pdf)
         json_pdf = pdf.to_json()
         with open(success_output, "w") as fh:
             json.dump(json_pdf, fh, indent=4)

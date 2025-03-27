@@ -3,6 +3,8 @@ import json
 import os.path
 import pprint
 import re
+import zlib
+from pathlib import Path
 # import os
 # import codecs
 import sys
@@ -74,7 +76,7 @@ class PdfObj:
                     )
 
     @classmethod
-    def match(cls, next_bytes: bytes) -> (bool, int):
+    def match(cls, next_bytes: bytes) -> tuple[bool, int]:
         """ Return the number of characters that match the class' Pattern (or 0 if no match) """
         # print(f"Checking {cls.__name__} for a match of {cls.Pattern} against {next_bytes[:4]}")
         assert cls.Pattern is not None, f"{cls.__name__} does not have a Pattern to match in match()"
@@ -137,7 +139,7 @@ class NestablePdfObj(PdfObj):
     #             else:
     #                 cls.get_contexts()[i] = getattr(sys.modules[__name__], c)
 
-    def match_end(self, next_bytes: bytes) -> (bool, int):
+    def match_end(self, next_bytes: bytes) -> tuple[bool, int]:
         assert self.EndingPattern is not None, f"{self.__class__.__name__} is missing an EndingPattern"
         match = self.EndingPattern.match(next_bytes)
         if match is None:
@@ -331,7 +333,7 @@ class PdfLiteralStringEscape(PdfObj):
                 b"n": b"\n",
                 b"r": b"\r",
                 b"t": b"\t",
-                b"b": b'\x08',  # chr(0x08),  # BACKSPACE
+                b"b": b'\x08',  # BACKSPACE
                 b"f": b"\f",
                 b"(": b"(",
                 b")": b")",
@@ -361,7 +363,7 @@ class PdfLiteralString(NestablePdfObj):
         self._unpaired_parenthesis = 0
         self.data = b""
 
-    def match_end(self, next_bytes: bytes) -> (bool, int):
+    def match_end(self, next_bytes: bytes) -> tuple[bool, int]:
         if self._unpaired_parenthesis > 0:
             return False, 0
         else:
@@ -432,12 +434,12 @@ class PdfIndirectObj(NestablePdfObj):
             # "reference": (decode_int(match.group(1)), decode_int(match.group(2))),
             "reference": f"R {decode_int(match.group(1))} {decode_int(match.group(2))}",
             "object": None,
-            "data stream": None,
+            # "data stream": None,
         }
 
     def add(self, child_obj: PdfObj) -> PdfObj:
         if isinstance(child_obj, PdfStream):
-            assert self.data["data stream"] is None, "Reference Object should not have multiple data streams"
+            assert "data stream" not in self.data, "Reference Object should not have multiple data streams"
             self.data["data stream"] = child_obj
         elif isinstance(child_obj, PdfWhitespaces):
             pass
@@ -479,7 +481,7 @@ class PdfCrossReferenceTable(NestablePdfObj):
     Pattern = re.compile(rb'xref' + LINEBREAK)
     EndingPattern = re.compile(rb'trailer')
 
-    def match_end(self, next_bytes: bytes) -> (bool, int):
+    def match_end(self, next_bytes: bytes) -> tuple[bool, int]:
         return super().match_end(next_bytes)[0], 0
 
 
@@ -580,9 +582,52 @@ def parse(filename) -> PdfDoc:
             )
     return pdf
 
+def decompress(pdf: PdfObj, save_dir):
+    for p in pdf.data:
+        if isinstance(p, PdfIndirectObj):
+            if "data stream" in p.data:
+                out_fn = save_dir / Path(f"{p.data['reference']}.bin")
+
+                filter = None
+                for pdf_key, pdf_value in p.data["object"].data.items():
+                    if pdf_key.data == "Filter":
+                        filter = pdf_value.data
+                        break
+                
+                if filter == "FlateDecode":
+                    
+                    print(f"Decoding with FlateDecode to {out_fn}")
+                    with open(out_fn, "wb") as fh:
+                        fh.write(zlib.decompress(p.data["data stream"].data))
+                    p.data["data stream"] = out_fn.as_posix()
+                # elif filter == b"ASCIIHexDecode":
+                #     p.data["data stream decompressed"] = ascii_hex_decode(p.data["data stream"].data)
+                # elif filter == b"ASCII85Decode":
+                #     p.data["data stream decompressed"] = ascii85_decode(p.data["data stream"].data)
+                # elif filter == b"LZWDecode":
+                #     p.data["data stream decompressed"] = lzw_decode(p.data["data stream"].data) 
+                elif filter is None:
+                    print("Decoding without filter")
+                    out_fn = out_fn.with_suffix(".txt")
+                    with open(out_fn, "wb") as fh:
+                        fh.write(p.data["data stream"].data)
+                    p.data["data stream"] = out_fn.as_posix()
+                else:
+                    print(f"Decompressing with filter {filter} is not implemented.")
+    return pdf
 
 if __name__ == "__main__":
+    
+    test_file = "test_pdfs/test01.pdf"
+    out_dir = Path("test_pdfs/test01_decompressed")
+    out_dir.mkdir(exist_ok=True)
+    for old_file in Path(out_dir).glob("*"):
+        old_file.unlink()
     pdf = parse(test_file)
+    pdf = decompress(pdf, out_dir)
+    with open(out_dir / "test01_decompressed.json", "w") as fh:
+        json.dump(pdf.to_json(), fh, indent=4)
+
 
     #
     # test = PdfList(b"", 0, None)
