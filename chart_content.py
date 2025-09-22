@@ -1,6 +1,6 @@
 from textwrap import fill
 
-from reader import *
+from pdf_parser import *
 
 DIVISIONS = 70 * 30
 WRAP_LEN = 70
